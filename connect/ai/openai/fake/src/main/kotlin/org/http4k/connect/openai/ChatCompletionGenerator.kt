@@ -21,7 +21,12 @@ val ChatCompletionGenerator.Companion.ReverseInput
     get() = ChatCompletionGenerator { req ->
         req.messages.flatMap { m ->
             m.content?.mapIndexed { i, content ->
-                Choice(i, ChoiceDetail(Role.System, content.text?.reversed() ?: "", null), null, StopReason.stop)
+                Choice(
+                    index = i,
+                    msg = ChoiceDetail(r = Role.System, content = content.text?.reversed() ?: ""),
+                    delta = null,
+                    finish_reason = StopReason.stop
+                )
             } ?: emptyList()
         }
     }
@@ -44,6 +49,9 @@ val ChatCompletionGenerator.Companion.Echo
 private fun ChatCompletion.choices(msg: String) = (if (stream) msg.split(" ").map { "$it " } else listOf(msg))
     .map {
         Choice(
-            0, ChoiceDetail(Role.System, it, null), null, StopReason.stop,
+            index = 0,
+            msg = ChoiceDetail(r = Role.System, content = it),
+            delta = null,
+            finish_reason = StopReason.stop
         )
     }

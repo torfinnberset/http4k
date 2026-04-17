@@ -52,7 +52,9 @@ data class ChatCompletion(
     val parallel_tool_calls: Boolean? = null,
     val service_tier: String? = null,
     val seed: Int? = null,
-    val stream_options: StreamOptions? = null
+    val stream_options: StreamOptions? = null,
+    val logprobs: Boolean? = null,
+    val top_logprobs: Int? = null
 ) : OpenAIAction<Sequence<CompletionResponse>> {
     constructor(model: ModelName, messages: List<Message>, max_tokens: MaxTokens, stream: Boolean = true) : this(
         model,
@@ -107,8 +109,20 @@ sealed class ResponseFormat {
 
     @JsonSerializable
     @PolymorphicLabel("json_schema")
-    data class JsonSchema(val strict: Boolean?, val json_schema: Map<String, Any>) : ResponseFormat()
+    data class JsonSchema(val json_schema: JsonSchemaSpec) : ResponseFormat() {
+        @Deprecated("Use JsonSchemaSpec(name, schema, strict) for correct JSON nesting", ReplaceWith("JsonSchema(JsonSchemaSpec(name = \"response\", schema = json_schema, strict = strict))"))
+        constructor(strict: Boolean?, json_schema: Map<String, Any>) : this(
+            JsonSchemaSpec(name = "response", schema = json_schema, strict = strict)
+        )
+    }
 }
+
+@JsonSerializable
+data class JsonSchemaSpec(
+    val name: String,
+    val schema: Map<String, Any>,
+    val strict: Boolean? = null
+)
 
 @JsonSerializable
 data class Message(
@@ -173,10 +187,31 @@ data class Choice(
     @JsonProperty(name = "message")
     internal val msg: ChoiceDetail?,
     internal val delta: ChoiceDetail?,
-    val finish_reason: StopReason?
+    val finish_reason: StopReason?,
+    val logprobs: ChoiceLogProbs? = null
 ) {
-    val message get() = msg ?: delta ?: ChoiceDetail(Role.Assistant, "", emptyList())
+    val message get() = msg ?: delta ?: ChoiceDetail(r = Role.Assistant, content = "", tool_calls = emptyList())
 }
+
+@JsonSerializable
+data class ChoiceLogProbs(
+    val content: List<TokenLogProb>? = null
+)
+
+@JsonSerializable
+data class TokenLogProb(
+    val token: String,
+    val logprob: Double,
+    val bytes: List<Int>? = null,
+    val top_logprobs: List<TopLogProb>? = null
+)
+
+@JsonSerializable
+data class TopLogProb(
+    val token: String,
+    val logprob: Double,
+    val bytes: List<Int>? = null
+)
 
 @JsonSerializable
 data class ChoiceDetail(
@@ -184,6 +219,8 @@ data class ChoiceDetail(
     internal val r: Role?,
     val content: String? = null,
     val tool_calls: List<ToolCall>? = null,
+    val reasoning: String? = null,
+    val reasoning_content: String? = null
 ) {
     val role = r ?: Role.Assistant
 }

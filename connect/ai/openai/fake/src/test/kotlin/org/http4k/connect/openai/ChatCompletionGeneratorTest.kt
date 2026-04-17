@@ -34,7 +34,7 @@ class ChatCompletionGeneratorTest {
         assertThat(
             ChatCompletionGenerator.ReverseInput(input),
             equalTo(
-                listOf(Choice(0, ChoiceDetail(System, "raboof"), null, StopReason.stop))
+                listOf(Choice(index = 0, msg = ChoiceDetail(r = System, content = "raboof"), delta = null, finish_reason = StopReason.stop))
             )
         )
     }
@@ -44,7 +44,7 @@ class ChatCompletionGeneratorTest {
         assertThat(
             ChatCompletionGenerator.Echo(input),
             equalTo(
-                listOf(Choice(0, ChoiceDetail(System, "foobar"), null, StopReason.stop))
+                listOf(Choice(index = 0, msg = ChoiceDetail(r = System, content = "foobar"), delta = null, finish_reason = StopReason.stop))
             )
         )
     }
