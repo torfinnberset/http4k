@@ -2,6 +2,9 @@ package workflows
 
 import io.typeflows.github.workflow.GitHub
 import io.typeflows.github.workflow.Job
+import io.typeflows.github.workflow.Permission.Contents
+import io.typeflows.github.workflow.PermissionLevel.Read
+import io.typeflows.github.workflow.Permissions
 import io.typeflows.github.workflow.RunsOn
 import io.typeflows.github.workflow.Secrets
 import io.typeflows.github.workflow.Tag
@@ -15,6 +18,13 @@ import io.typeflows.github.workflow.step.marketplace.SetupGradle
 import io.typeflows.github.workflow.step.marketplace.SetupJava
 import io.typeflows.github.workflow.trigger.Push
 import io.typeflows.util.Builder
+import org.http4k.typeflows.GithubActionConstants.CHECKOUT
+import org.http4k.typeflows.GithubActionConstants.SETUP_GRADLE
+import org.http4k.typeflows.GithubActionConstants.SETUP_JAVA
+import workflows.Actions.CONFIGURE_AWS
+import workflows.Actions.COSIGN_INSTALLER
+import workflows.Actions.DOWNLOAD_ARTIFACT
+import workflows.Actions.UPLOAD_ARTIFACT
 import workflows.Standards.MAIN_REPO
 
 class PublishArtifacts : Builder<Workflow> {
@@ -24,20 +34,19 @@ class PublishArtifacts : Builder<Workflow> {
             tags += Tag.of("*")
         }
 
-        jobs += Job("Release", RunsOn.UBUNTU_LATEST) {
-            condition = GitHub.repository.isEqualTo(MAIN_REPO)
+        permissions = Permissions(Contents to Read)
 
-            steps += Checkout {
+        val buildJob = Job("build", RunsOn.UBUNTU_LATEST) {
+            condition = GitHub.repository.isEqualTo(MAIN_REPO)
+            permissions = Permissions(Contents to Read)
+
+            steps += Checkout(CHECKOUT) {
                 ref = $$"${{ github.ref_name }}"
             }
 
-            steps += SetupJava(Adopt, V21)
+            steps += SetupJava(Adopt, V21, SETUP_JAVA)
 
-            steps += SetupGradle()
-
-            steps += UseAction("sigstore/cosign-installer@v3.8.0") {
-                name = "Install cosign"
-            }
+            steps += SetupGradle(SETUP_GRADLE)
 
             steps += RunCommand(
                 $$"""
@@ -83,42 +92,30 @@ class PublishArtifacts : Builder<Workflow> {
                 env["RELEASE_VERSION"] = $$"${{ github.ref_name }}"
             }
 
-            steps += RunCommand(
-                $$"""
-                ./gradlew generatePomFileForMavenPublication generatePomFileForPluginMavenPublication --no-configuration-cache \
-                -PreleaseVersion="$RELEASE_VERSION"
-            """.trimIndent()
-            ) {
-                name = "Generate POMs"
-                shell = "bash"
-                env["RELEASE_VERSION"] = $$"${{ github.ref_name }}"
+            steps += UseAction(CONFIGURE_AWS) {
+                name = "Configure AWS credentials (read)"
+                with["aws-access-key-id"] = Secrets.string("LTS_PUBLISHING_USER")
+                with["aws-secret-access-key"] = Secrets.string("LTS_PUBLISHING_PASSWORD")
+                with["aws-region"] = "us-east-1"
             }
 
-            steps += RunCommand($$"""bin/sign-and-attest.sh "$RELEASE_VERSION"""") {
-                name = "Sign artifacts and generate provenance"
+            steps += RunCommand($$"bin/preseed-metadata.sh") {
+                name = "Pre-seed maven-metadata for merge"
                 shell = "bash"
-                env["RELEASE_VERSION"] = $$"${{ github.ref_name }}"
-                env["COSIGN_PRIVATE_KEY"] = Secrets.string("COSIGN_PRIVATE_KEY")
-                env["COSIGN_PASSWORD"] = Secrets.string("COSIGN_PASSWORD")
             }
 
             steps += RunCommand(
                 $$"""
-                ./gradlew publishAllPublicationsToHttp4kRepository --no-configuration-cache \
+                ./gradlew publishAllPublicationsToHttp4kLtsRepository --no-configuration-cache \
                 -Psign=true \
-                -PincludeProvenance=true \
                 -PreleaseVersion="$RELEASE_VERSION" \
-                -PltsPublishingUser="$LTS_PUBLISHING_USER" \
-                -PltsPublishingPassword="$LTS_PUBLISHING_PASSWORD" \
                 -PsigningKey="$SIGNING_KEY" \
                 -PsigningPassword="$SIGNING_PASSWORD"
             """.trimIndent()
             ) {
-                name = "Publish to http4k Maven"
+                name = "Build S3 Maven layout"
                 shell = "bash"
                 env["RELEASE_VERSION"] = $$"${{ github.ref_name }}"
-                env["LTS_PUBLISHING_USER"] = Secrets.string("LTS_PUBLISHING_USER")
-                env["LTS_PUBLISHING_PASSWORD"] = $$"${{ secrets.LTS_PUBLISHING_PASSWORD }}"
                 env["SIGNING_KEY"] = Secrets.string("SIGNING_KEY")
                 env["SIGNING_PASSWORD"] = Secrets.string("SIGNING_PASSWORD")
                 env["ORG_GRADLE_PROJECT_signingInMemoryKey"] = Secrets.string("SIGNING_KEY")
@@ -143,6 +140,65 @@ class PublishArtifacts : Builder<Workflow> {
                 env["ORG_GRADLE_PROJECT_mavenCentralPassword"] = Secrets.string("MAVEN_CENTRAL_PASSWORD")
                 env["ORG_GRADLE_PROJECT_signingInMemoryKey"] = Secrets.string("SIGNING_KEY")
                 env["ORG_GRADLE_PROJECT_signingInMemoryKeyPassword"] = Secrets.string("SIGNING_PASSWORD")
+            }
+
+            steps += RunCommand($$"bin/package-build-outputs.sh") {
+                name = "Package build outputs for signing"
+                shell = "bash"
+            }
+
+            steps += UseAction(UPLOAD_ARTIFACT) {
+                name = "Upload build outputs"
+                with["name"] = "build-outputs"
+                with["path"] = "build-outputs.tar.gz"
+                with["retention-days"] = "1"
+            }
+        }
+        jobs += buildJob
+
+        jobs += Job("attest", RunsOn.UBUNTU_LATEST) {
+            needs += buildJob
+            condition = GitHub.repository.isEqualTo(MAIN_REPO)
+            permissions = Permissions(Contents to Read)
+
+            steps += Checkout(CHECKOUT) {
+                ref = $$"${{ github.ref_name }}"
+            }
+
+            steps += UseAction(COSIGN_INSTALLER) {
+                name = "Install cosign"
+            }
+
+            steps += UseAction(CONFIGURE_AWS) {
+                name = "Configure AWS credentials (write)"
+                with["aws-access-key-id"] = Secrets.string("LTS_PUBLISHING_USER")
+                with["aws-secret-access-key"] = Secrets.string("LTS_PUBLISHING_PASSWORD")
+                with["aws-region"] = "us-east-1"
+            }
+
+            steps += UseAction(DOWNLOAD_ARTIFACT) {
+                name = "Download build outputs"
+                with["name"] = "build-outputs"
+            }
+
+            steps += RunCommand($$"tar -xzf build-outputs.tar.gz") {
+                name = "Restore build outputs"
+                shell = "bash"
+            }
+
+            steps += RunCommand($$"""bin/sign-and-attest.sh "$RELEASE_VERSION"""") {
+                name = "Sign artifacts and generate provenance"
+                shell = "bash"
+                env["RELEASE_VERSION"] = $$"${{ github.ref_name }}"
+                env["COSIGN_PRIVATE_KEY"] = Secrets.string("COSIGN_PRIVATE_KEY")
+                env["COSIGN_PASSWORD"] = Secrets.string("COSIGN_PASSWORD")
+                env["SIGNING_KEY"] = Secrets.string("SIGNING_KEY")
+                env["SIGNING_PASSWORD"] = Secrets.string("SIGNING_PASSWORD")
+            }
+
+            steps += RunCommand($$"bin/sync-to-s3.sh") {
+                name = "Publish to http4k Maven (S3)"
+                shell = "bash"
             }
 
             steps += RunCommand($$"bin/notify_lts_slack.sh ${{ github.ref_name }}") {

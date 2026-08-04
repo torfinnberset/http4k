@@ -3,8 +3,14 @@ package workflows
 import io.typeflows.github.workflow.Conditions.always
 import io.typeflows.github.workflow.GitHub
 import io.typeflows.github.workflow.Job
+import io.typeflows.github.workflow.Permission.Checks
+import io.typeflows.github.workflow.Permission.Contents
+import io.typeflows.github.workflow.PermissionLevel.Read
+import io.typeflows.github.workflow.PermissionLevel.Write
+import io.typeflows.github.workflow.Permissions
 import io.typeflows.github.workflow.RunsOn.Companion.UBUNTU_LATEST
 import io.typeflows.github.workflow.Secrets
+import io.typeflows.github.workflow.StrExp
 import io.typeflows.github.workflow.Workflow
 import io.typeflows.github.workflow.step.RunCommand
 import io.typeflows.github.workflow.step.UseAction
@@ -15,7 +21,16 @@ import io.typeflows.github.workflow.trigger.Paths
 import io.typeflows.github.workflow.trigger.PullRequest
 import io.typeflows.github.workflow.trigger.Push
 import io.typeflows.util.Builder
+import org.http4k.typeflows.GithubActionConstants.CHECKOUT
+import org.http4k.typeflows.GithubActionConstants.SETUP_GRADLE
+import workflows.Actions.BUILDNOTE
+import workflows.Actions.CODECOV
+import workflows.Actions.CREATE_GITHUB_APP_TOKEN
+import workflows.Actions.DEPENDENCY_REVIEW
+import workflows.Actions.JUNIT_REPORT
+import workflows.Actions.WRAPPER_VALIDATION
 import workflows.Standards.Java
+import workflows.Standards.MAIN_REPO
 
 class Build : Builder<Workflow> {
     override fun build() = Workflow("build-http4k") {
@@ -30,20 +45,34 @@ class Build : Builder<Workflow> {
             paths = Paths.Ignore("**/*.md")
         }
 
+        permissions = Permissions(Contents to Read)
+
         jobs += Job("build", UBUNTU_LATEST) {
+            permissions = Permissions(Contents to Read, Checks to Write)
             env["BUILDNOTE_API_KEY"] = Secrets.string("BUILDNOTE_API_KEY")
             env["BUILDNOTE_GITHUB_JOB_NAME"] = "build"
 
-            steps += Checkout {
+            steps += Checkout(CHECKOUT) {
                 // required by release_tag.sh to correctly identify files changed in the last commit
                 fetchDepth = 2
                 // required by release_tag.sh to allow pushing with another credentials so other workflows are triggered
                 persistCredentials = false
             }
 
+            steps += UseAction(WRAPPER_VALIDATION) {
+                name = "Validate Gradle wrapper"
+            }
+
+            // block PRs that introduce vulnerable or disallowed dependencies (PR events only)
+            steps += UseAction(DEPENDENCY_REVIEW) {
+                name = "Dependency review"
+                condition = StrExp.of("github.event_name").isEqualTo("pull_request")
+                with["fail-on-severity"] = "high"
+            }
+
             steps += Java
 
-            steps += SetupGradle()
+            steps += SetupGradle(SETUP_GRADLE)
 
             steps += RunCommand("bin/build_ci.sh") {
                 name = "Build"
@@ -52,14 +81,19 @@ class Build : Builder<Workflow> {
                 env["HONEYCOMB_DATASET"] = Secrets.string("HONEYCOMB_DATASET")
             }
 
-            steps += UseAction("buildnote/action@main") {
+            steps += UseAction(CODECOV) {
+                name = "Upload coverage to Codecov"
+                condition = GitHub.repository.isEqualTo(MAIN_REPO)
+                with["token"] = Secrets.string("CODECOV_TOKEN")
+                with["files"] = "build/reports/jacoco/test/jacocoRootReport.xml"
+            }
+
+            steps += UseAction(BUILDNOTE) {
                 name = "Buildnote"
                 condition = always()
             }
 
-            steps += UseAction(
-                "mikepenz/action-junit-report@v5.6.2",
-            ) {
+            steps += UseAction(JUNIT_REPORT) {
                 name = "Publish Test Report"
                 condition = always()
                 with["report_paths"] = "**/build/test-results/test/TEST-*.xml"
@@ -68,17 +102,25 @@ class Build : Builder<Workflow> {
                 with["update_check"] = "true"
             }
 
+            steps += UseAction(CREATE_GITHUB_APP_TOKEN) {
+                name = "Generate release token"
+                id = "release-token"
+                condition = GitHub.ref.isEqualTo("refs/heads/master")
+                with["app-id"] = Secrets.string("RELEASE_APP_ID")
+                with["private-key"] = Secrets.string("RELEASE_APP_PRIVATE_KEY")
+            }
+
             steps += RunCommand(
                 $"""
                 git config user.name github-actions
                 git config user.email github-actions@github.com
-                git remote set-url origin https://x-access-token:${'$'}{{ secrets.ORG_PUBLIC_REPO_RELEASE_TRIGGERING }}@github.com/${'$'}{GITHUB_REPOSITORY}.git
+                git remote set-url origin https://x-access-token:${'$'}{{ steps.release-token.outputs.token }}@github.com/${'$'}{GITHUB_REPOSITORY}.git
                 bin/release_tag.sh
             """.trimIndent()
             ) {
                 name = "Release (if required)"
                 condition = GitHub.ref.isEqualTo("refs/heads/master")
-                env["GH_TOKEN"] = Secrets.string("ORG_PUBLIC_REPO_RELEASE_TRIGGERING")
+                env["GH_TOKEN"] = $$"${{ steps.release-token.outputs.token }}"
             }
         }
     }

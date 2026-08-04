@@ -6,6 +6,7 @@ flowchart TD
     push(["📤 push<br/>branches(only: 1), paths(ignore: 1)"])
     schedule(["⏰ schedule<br/>0 12 * * 3"])
     subgraph securitydependabotyml["Security - Dependency Analysis (dependabot)"]
+        securitydependabotyml_metadata[["🔧 Workflow Config<br/>🔐 custom permissions"]]
         securitydependabotyml_build["Dependencies<br/>🐧 ubuntu-latest<br/>🔐 if: github.repository == 'http4k\/http4k'"]
     end
     push --> securitydependabotyml_build

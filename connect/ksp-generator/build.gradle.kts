@@ -6,8 +6,6 @@ plugins {
     id("org.http4k.community")
     id("org.http4k.connect.module")
     id("com.google.devtools.ksp")
-//    alias(libs.plugins.ksp) }
-
 }
 
 dependencies {
@@ -27,5 +25,6 @@ dependencies {
 
     kspTest(project(":http4k-connect-ksp-generator"))
     kspTestFixtures(project(":http4k-connect-ksp-generator"))
+    kspTestFixtures(libs.kotshi.compiler)
 }
 

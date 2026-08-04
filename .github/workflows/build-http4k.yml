@@ -10,25 +10,37 @@ on:
     - dependency-update
     paths-ignore:
     - '**/*.md'
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
       BUILDNOTE_API_KEY: ${{ secrets.BUILDNOTE_API_KEY }}
       BUILDNOTE_GITHUB_JOB_NAME: build
+    permissions:
+      checks: write
+      contents: read
     steps:
     - name: Checkout
-      uses: actions/checkout@v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
         fetch-depth: 2
+    - name: Validate Gradle wrapper
+      uses: gradle/actions/wrapper-validation@ed408507eac070d1f99cc633dbcf757c94c7933a
+    - name: Dependency review
+      if: github.event_name == 'pull_request'
+      uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48
+      with:
+        fail-on-severity: high
     - name: Setup Java
-      uses: actions/setup-java@v5.2.0
+      uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
       with:
         java-version: '21'
         distribution: adopt
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v6.1.0
+      uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92
     - name: Build
       timeout-minutes: 120
       run: bin/build_ci.sh
@@ -36,24 +48,37 @@ jobs:
         HONEYCOMB_API_KEY: ${{ secrets.HONEYCOMB_API_KEY }}
         HONEYCOMB_DATASET: ${{ secrets.HONEYCOMB_DATASET }}
       shell: bash
+    - name: Upload coverage to Codecov
+      if: github.repository == 'http4k/http4k'
+      uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: build/reports/jacoco/test/jacocoRootReport.xml
     - name: Buildnote
       if: always()
-      uses: buildnote/action@main
+      uses: buildnote/action@dccb92269d3f9a2515ad63e03d45af686ce3febd
     - name: Publish Test Report
       if: always()
-      uses: mikepenz/action-junit-report@v5.6.2
+      uses: mikepenz/action-junit-report@3585e9575db828022551b4231f165eb59a0e74e3
       with:
         report_paths: '**/build/test-results/test/TEST-*.xml'
         github_token: ${{ secrets.GITHUB_TOKEN }}
         check_annotations: 'true'
         update_check: 'true'
+    - name: Generate release token
+      id: release-token
+      if: github.ref == 'refs/heads/master'
+      uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+      with:
+        app-id: ${{ secrets.RELEASE_APP_ID }}
+        private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     - name: Release (if required)
       if: github.ref == 'refs/heads/master'
       run: |-
         git config user.name github-actions
         git config user.email github-actions@github.com
-        git remote set-url origin https://x-access-token:${{ secrets.ORG_PUBLIC_REPO_RELEASE_TRIGGERING }}@github.com/${GITHUB_REPOSITORY}.git
+        git remote set-url origin https://x-access-token:${{ steps.release-token.outputs.token }}@github.com/${GITHUB_REPOSITORY}.git
         bin/release_tag.sh
       env:
-        GH_TOKEN: ${{ secrets.ORG_PUBLIC_REPO_RELEASE_TRIGGERING }}
+        GH_TOKEN: ${{ steps.release-token.outputs.token }}
       shell: bash

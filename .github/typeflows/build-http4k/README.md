@@ -6,6 +6,7 @@ flowchart TD
     push(["📤 push<br/>branches(only: 1), paths(ignore: 1)"])
     pullrequest(["🔀 pull_request<br/>(*), branches(ignore: 1), paths(ignore: 1)"])
     subgraph buildhttp4kyml["Build"]
+        buildhttp4kyml_metadata[["🔧 Workflow Config<br/>🔐 custom permissions"]]
         buildhttp4kyml_build["build<br/>🐧 ubuntu-latest<br/>🔑 Uses secrets"]
     end
     push --> buildhttp4kyml_build
@@ -16,7 +17,7 @@ flowchart TD
 
 | Job | OS | Dependencies | Config |
 |-----|----|--------------|---------| 
-| `build` | 🐧 ubuntu-latest | - | 🌍 env |
+| `build` | 🐧 ubuntu-latest | - | 🌍 env 🔐 perms |
 
 ### Steps
 
@@ -28,36 +29,60 @@ flowchart TD
     action1["🎬 actions<br/>checkout<br/><br/>📝 Inputs:<br/>• persist-credentials: false<br/>• fetch-depth: 2"]
     style action1 fill:#e1f5fe,stroke:#0277bd
     step1 -.-> action1
-    step2["Step 2: Setup Java"]
+    step2["Step 2: Validate Gradle wrapper"]
     style step2 fill:#f8f9fa,stroke:#495057
-    action2["🎬 actions<br/>setup-java<br/><br/>📝 Inputs:<br/>• java-version: 21<br/>• distribution: adopt"]
+    action2["🎬 gradle<br/>actions/wrapper-validation"]
     style action2 fill:#e1f5fe,stroke:#0277bd
     step2 -.-> action2
     step1 --> step2
-    step3["Step 3: Setup Gradle"]
+    step3["Step 3: Dependency review<br/>🔐 if: github.event_name == 'pull_request'"]
     style step3 fill:#f8f9fa,stroke:#495057
-    action3["🎬 gradle<br/>actions/setup-gradle"]
+    action3["🎬 actions<br/>dependency-review-action<br/><br/>📝 Inputs:<br/>• fail-on-severity: high"]
     style action3 fill:#e1f5fe,stroke:#0277bd
     step3 -.-> action3
     step2 --> step3
-    step4["Step 4: Build<br/>💻 bash<br/>⏱️ 120m timeout"]
-    style step4 fill:#f3e5f5,stroke:#7b1fa2
+    step4["Step 4: Setup Java"]
+    style step4 fill:#f8f9fa,stroke:#495057
+    action4["🎬 actions<br/>setup-java<br/><br/>📝 Inputs:<br/>• java-version: 21<br/>• distribution: adopt"]
+    style action4 fill:#e1f5fe,stroke:#0277bd
+    step4 -.-> action4
     step3 --> step4
-    step5["Step 5: Buildnote<br/>🔐 if: always()"]
+    step5["Step 5: Setup Gradle"]
     style step5 fill:#f8f9fa,stroke:#495057
-    action5["🎬 buildnote<br/>action"]
+    action5["🎬 gradle<br/>actions/setup-gradle"]
     style action5 fill:#e1f5fe,stroke:#0277bd
     step5 -.-> action5
     step4 --> step5
-    step6["Step 6: Publish Test Report<br/>🔐 if: always()"]
-    style step6 fill:#f8f9fa,stroke:#495057
-    action6["🎬 mikepenz<br/>action-junit-report<br/><br/>📝 Inputs:<br/>• report_paths: **/build/test-results/test/TES...<br/>• github_token: ${{ secrets.GITHUB_TOKEN }}<br/>• check_annotations: true<br/>• update_check: true"]
-    style action6 fill:#e1f5fe,stroke:#0277bd
-    step6 -.-> action6
+    step6["Step 6: Build<br/>💻 bash<br/>⏱️ 120m timeout"]
+    style step6 fill:#f3e5f5,stroke:#7b1fa2
     step5 --> step6
-    step7["Step 7: Release (if required)<br/>🔐 if: github.ref == 'refs/heads/master'<br/>💻 bash"]
-    style step7 fill:#f3e5f5,stroke:#7b1fa2
+    step7["Step 7: Upload coverage to Codecov<br/>🔐 if: github.repository == 'http4k/http4k'"]
+    style step7 fill:#f8f9fa,stroke:#495057
+    action7["🎬 codecov<br/>codecov-action<br/><br/>📝 Inputs:<br/>• token: ${{ secrets.CODECOV_TOKEN }}<br/>• files: build/reports/jacoco/test/jaco..."]
+    style action7 fill:#e1f5fe,stroke:#0277bd
+    step7 -.-> action7
     step6 --> step7
+    step8["Step 8: Buildnote<br/>🔐 if: always()"]
+    style step8 fill:#f8f9fa,stroke:#495057
+    action8["🎬 buildnote<br/>action"]
+    style action8 fill:#e1f5fe,stroke:#0277bd
+    step8 -.-> action8
+    step7 --> step8
+    step9["Step 9: Publish Test Report<br/>🔐 if: always()"]
+    style step9 fill:#f8f9fa,stroke:#495057
+    action9["🎬 mikepenz<br/>action-junit-report<br/><br/>📝 Inputs:<br/>• report_paths: **/build/test-results/test/TES...<br/>• github_token: ${{ secrets.GITHUB_TOKEN }}<br/>• check_annotations: true<br/>• update_check: true"]
+    style action9 fill:#e1f5fe,stroke:#0277bd
+    step9 -.-> action9
+    step8 --> step9
+    step10["Step 10: Generate release token<br/>🔐 if: github.ref == 'refs/heads/master'"]
+    style step10 fill:#f8f9fa,stroke:#495057
+    action10["🎬 actions<br/>create-github-app-token<br/><br/>📝 Inputs:<br/>• app-id: ${{ secrets.RELEASE_APP_ID }}<br/>• private-key: ${{ secrets.RELEASE_APP_PRIVAT..."]
+    style action10 fill:#e1f5fe,stroke:#0277bd
+    step10 -.-> action10
+    step9 --> step10
+    step11["Step 11: Release (if required)<br/>🔐 if: github.ref == 'refs/heads/master'<br/>💻 bash"]
+    style step11 fill:#f3e5f5,stroke:#7b1fa2
+    step10 --> step11
 ```
 
 **Step Types Legend:**

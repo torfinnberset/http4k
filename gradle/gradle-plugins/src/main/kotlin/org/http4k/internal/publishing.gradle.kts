@@ -3,7 +3,6 @@ package org.http4k.internal
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
 import groovy.namespace.QName
 import groovy.util.Node
-import java.net.URI
 
 plugins {
     kotlin("jvm")
@@ -30,16 +29,8 @@ configure<MavenPublishBaseExtension> {
     configure<PublishingExtension> {
         repositories {
             maven {
-                name = "http4k"
-                url = URI("s3://http4k-maven")
-
-                val ltsPublishingUser = project.findProperty("ltsPublishingUser") as String?
-                val ltsPublishingPassword = project.findProperty("ltsPublishingPassword") as String?
-
-                credentials(AwsCredentials::class.java) {
-                    accessKey = ltsPublishingUser
-                    secretKey = ltsPublishingPassword
-                }
+                name = "http4kLts"
+                url = rootProject.layout.buildDirectory.dir("lts-staging").get().asFile.toURI()
             }
         }
 
@@ -71,75 +62,6 @@ configure<MavenPublishBaseExtension> {
             project.name,
             project.findProperty("releaseVersion")?.toString() ?: "LOCAL"
         )
-
-        if (project.findProperty("includeProvenance") == "true") {
-            val version = project.findProperty("releaseVersion")?.toString() ?: "LOCAL"
-            val buildDir = project.layout.buildDirectory.get().asFile
-
-            project.afterEvaluate {
-                publications.withType<MavenPublication>().matching { it.name == "maven" || it.name == "pluginMaven" }.configureEach {
-                    artifact(File(buildDir, "reports/${project.name}-sbom.json")) {
-                        classifier = "cyclonedx"
-                        extension = "json"
-                    }
-                    artifact(File(buildDir, "reports/${project.name}-sbom.json.sigstore.json")) {
-                        classifier = "cyclonedx-sigstore"
-                        extension = "json"
-                    }
-                    artifact(File(buildDir, "libs/${project.name}-${version}.jar.sigstore.json")) {
-                        classifier = "jar-sigstore"
-                        extension = "json"
-                    }
-                    artifact(
-                        File(
-                            rootProject.layout.buildDirectory.get().asFile,
-                            "provenance/${project.name}-${version}.provenance.json"
-                        )
-                    ) {
-                        classifier = "provenance"
-                        extension = "json"
-                    }
-                    artifact(
-                        File(
-                            rootProject.layout.buildDirectory.get().asFile,
-                            "provenance/${project.name}-${version}.provenance.json.sigstore.json"
-                        )
-                    ) {
-                        classifier = "provenance-sigstore"
-                        extension = "json"
-                    }
-                    artifact(File(buildDir, "reports/${project.name}-license-report.json")) {
-                        classifier = "license-report"
-                        extension = "json"
-                    }
-                    artifact(File(buildDir, "reports/${project.name}-license-report.json.sigstore.json")) {
-                        classifier = "license-report-sigstore"
-                        extension = "json"
-                    }
-                    val libsDir = File(buildDir, "libs")
-                    artifact(File(libsDir, "${project.name}-${version}-sources.jar.sigstore.json")) {
-                        classifier = "sources-sigstore"
-                        extension = "json"
-                    }
-                    artifact(File(libsDir, "${project.name}-${version}-javadoc.jar.sigstore.json")) {
-                        classifier = "javadoc-sigstore"
-                        extension = "json"
-                    }
-                    File(libsDir, "${project.name}-${version}-test-fixtures-sources.jar.sigstore.json")
-                        .takeIf { it.exists() }
-                        ?.let { sig ->
-                            artifact(sig) {
-                                classifier = "test-fixtures-sources-sigstore"
-                                extension = "json"
-                            }
-                        }
-                    artifact(File(buildDir, "publications/$name/pom-default.xml.sigstore.json")) {
-                        classifier = "pom-sigstore"
-                        extension = "json"
-                    }
-                }
-            }
-        }
 
         pom {
             withXml {
